@@ -6,14 +6,32 @@ require('dotenv').config();
 const app = express();
 
 // --- 1. Middleware ---
-// CRITICAL: We explicitly allow both localhost and the 127.0.0.1 IP 
-// to match the Vite frontend request.
+// Optimized for Cloud Deployment: Allows Local, Render, and Vercel domains
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'https://bricks-requisition-app-12.onrender.com', // Render Frontend
+  /\.vercel\.app$/                                  // Any Vercel deployment
+];
+
 app.use(cors({
-  origin: [
-    'http://localhost:5173', 
-    'http://127.0.0.1:5173',
-    'http://localhost:3000' // Future-proofing for other dev tools
-  ], 
+  origin: function (origin, callback) {
+    // allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (allowed instanceof RegExp) return allowed.test(origin);
+      return allowed === origin;
+    });
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.log("🚫 CORS Blocked Origin:", origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -32,7 +50,7 @@ const connectDB = async () => {
   } catch (err) {
     console.error("❌ Database Connection Error:");
     console.error(`Reason: ${err.message}`);
-    console.log("💡 Check: IP Whitelist (0.0.0.0/0) and Credentials in .env");
+    console.log("💡 Check: IP Whitelist (0.0.0.0/0) and Credentials in Render Environment");
   }
 };
 
@@ -41,8 +59,9 @@ connectDB();
 // --- 3. Request Logger ---
 app.use((req, res, next) => {
   console.log(`📡 ${req.method} request to: ${req.url}`);
-  // Log body for debugging submission issues (remove in production)
-  if (req.method === 'POST') console.log('📦 Body:', req.body);
+  if (process.env.NODE_ENV !== 'production' && req.method === 'POST') {
+    console.log('📦 Body:', req.body);
+  }
   next();
 });
 
@@ -51,7 +70,7 @@ try {
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/requisitions', require('./routes/requisition'));
 } catch (error) {
-  console.warn("⚠️ Route Loading Error: Check folder structure.");
+  console.warn("⚠️ Route Loading Error: Check folder structure or missing route files.");
 }
 
 // --- 5. Health Check ---
@@ -61,7 +80,8 @@ app.get('/', (req, res) => {
     status: "Active",
     portal: "BRICKS Requisition API",
     database: dbStatus,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -70,13 +90,14 @@ app.use((err, req, res, next) => {
   console.error("🚩 Server Error:", err.stack);
   res.status(500).json({ 
     error: "Internal Server Error", 
-    details: err.message 
+    details: process.env.NODE_ENV === 'production' ? "Contact IT Support" : err.message 
   });
 });
 
 // --- 7. Server Startup ---
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 BRICKS Server running on http://localhost:${PORT}`);
-  console.log(`🔗 Listening on all local interfaces (0.0.0.0:${PORT})`);
+// We use 0.0.0.0 for Render/Heroku port binding
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 BRICKS Server running on port ${PORT}`);
+  console.log(`🔗 Production URL: https://bricks-requisition-app.onrender.com`);
 });
