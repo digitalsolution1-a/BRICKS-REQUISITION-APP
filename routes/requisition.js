@@ -7,7 +7,6 @@ const Requisition = require('../models/Requisition');
 const sendEmail = require('../utils/mailer');
 
 // --- CLOUDINARY CONFIGURATION ---
-// These use the Environment Variables you added to Render
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -20,7 +19,7 @@ const storage = new CloudinaryStorage({
   params: {
     folder: 'bricks_requisitions',
     allowed_formats: ['jpg', 'png', 'pdf'],
-    resource_type: 'auto', // Essential for PDF support
+    resource_type: 'auto', 
   },
 });
 
@@ -29,13 +28,25 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB Limit
 });
 
-// 1. GET Pending Requisitions (For Dashboard)
-router.get('/pending', async (req, res) => {
+// 1. GET Pending Requisitions (Filtered by Role for Dashboard)
+router.get('/pending/:role', async (req, res) => {
+  const { role } = req.params;
   try {
-    const pendingRequests = await Requisition.find({ 
-      status: 'Pending' 
-    }).sort({ createdAt: -1 });
+    let query = { status: 'Pending' };
 
+    // Role-specific stage filtering
+    if (role === 'HOD') {
+      query.currentStage = 'HOD';
+    } else if (role === 'FC') {
+      query.currentStage = 'FC';
+    } else if (role === 'MD') {
+      // MD sees standard MD items OR FC items for override capability
+      query.currentStage = { $in: ['MD', 'FC'] };
+    } else if (role === 'Accountant') {
+      query.currentStage = 'ACCOUNTS';
+    }
+
+    const pendingRequests = await Requisition.find(query).sort({ createdAt: -1 });
     res.json(pendingRequests);
   } catch (err) {
     console.error("❌ Fetch Error:", err.message);
@@ -57,7 +68,7 @@ router.get('/user/:email', async (req, res) => {
   }
 });
 
-// 3. Submit a New Requisition with Cloudinary Upload
+// 3. Submit a New Requisition
 router.post('/submit', upload.single('document'), async (req, res) => {
   try {
     const newReq = new Requisition({
@@ -77,11 +88,8 @@ router.post('/submit', upload.single('document'), async (req, res) => {
       modeOfPayment: req.body.modeOfPayment,
       beneficiaryDetails: req.body.beneficiaryDetails || "N/A",
       requestNarrative: req.body.requestNarrative || "N/A",
-      
-      // Cloudinary returns the full HTTPS URL in req.file.path
       attachmentUrl: req.file ? req.file.path : null,
       attachmentName: req.file ? req.file.originalname : null,
-      
       currentStage: 'HOD',
       status: 'Pending',
       createdAt: new Date()
@@ -89,27 +97,19 @@ router.post('/submit', upload.single('document'), async (req, res) => {
 
     const savedReq = await newReq.save();
     
-    // Updated Email Theme to #A67C52
     const submissionEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px; max-width: 600px;">
-        <h2 style="color: #A67C52; text-transform: uppercase; letter-spacing: 1px;">New Fleet Requisition</h2>
-        <p style="color: #555;">A new requisition has been submitted for your professional approval.</p>
+        <h2 style="color: #A67C52;">New Fleet Requisition</h2>
+        <p>A new requisition has been submitted for your professional approval.</p>
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;"/>
         <p><strong>Requester:</strong> ${savedReq.requesterName} (${savedReq.department})</p>
-        <p><strong>Vendor:</strong> ${savedReq.vendorName}</p>
         <p><strong>Total Amount:</strong> <span style="font-size: 18px; color: #A67C52; font-weight: bold;">${savedReq.currency} ${savedReq.amount.toLocaleString()}</span></p>
-        <p><strong>Narrative:</strong> ${savedReq.requestNarrative}</p>
         <br/>
-        <a href="https://bricks-requisition-app.vercel.app/dashboard" 
-           style="background: #A67C52; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 800; display: inline-block; font-size: 12px; letter-spacing: 2px; text-transform: uppercase;">
-           Review & Approve
-        </a>
-        <p style="font-size: 10px; color: #bbb; margin-top: 30px; text-align: center;">BRICKS Limited Maritime Logistics Management System</p>
+        <a href="https://bricks-requisition-app.vercel.app/dashboard" style="background: #A67C52; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 800; display: inline-block; font-size: 12px; text-transform: uppercase;">Review & Approve</a>
       </div>
     `;
     
     await sendEmail(savedReq.hodForApproval, "Action Required: Requisition Approval", submissionEmail);
-    
     res.status(201).json({ msg: "Submitted Successfully", data: savedReq });
   } catch (err) {
     console.error("Submission Error:", err);
@@ -117,9 +117,9 @@ router.post('/submit', upload.single('document'), async (req, res) => {
   }
 });
 
-// 4. Action Route (Approval/Decline/Override)
+// 4. Action Route (Approval/Decline/MD & Admin Override)
 router.post('/action/:id', async (req, res) => {
-  const { action, comment, actorRole, actorName } = req.body; 
+  const { action, comment, actorRole, actorName, isOverride } = req.body; 
   
   try {
     const reqst = await Requisition.findById(req.params.id);
@@ -135,37 +135,34 @@ router.post('/action/:id', async (req, res) => {
         <div style="font-family: sans-serif; border: 2px solid #d32f2f; padding: 25px; border-radius: 20px;">
           <h2 style="color: #d32f2f;">Requisition Declined</h2>
           <p>Your request for <strong>${reqst.vendorName}</strong> has been declined.</p>
-          <div style="background: #fff5f5; padding: 15px; border-radius: 10px; border-left: 5px solid #d32f2f;">
-            <strong>Reason:</strong> ${comment || "No comment provided."}
-          </div>
+          <p><strong>Reason:</strong> ${comment || "No comment provided."}</p>
         </div>
       `;
       await sendEmail(reqst.requesterEmail, "Requisition Status: Declined", declineEmail);
       return res.json({ msg: "Requisition Declined" });
     }
 
-    // --- SUPER ADMIN OVERRIDE ---
-    if (actorRole === 'Admin' && action === 'Approved') {
-      reqst.currentStage = 'PAID';
-      reqst.status = 'Paid';
+    // --- OVERRIDE LOGIC (Admin or MD Bypassing FC) ---
+    if (isOverride || (actorRole === 'MD' && reqst.currentStage === 'FC')) {
+      const isMD = actorRole === 'MD';
+      
+      // Admin force-pays, MD force-sends to Accountant
+      reqst.currentStage = isMD ? 'ACCOUNTS' : 'PAID';
+      reqst.status = isMD ? 'Pending' : 'Paid';
+      
+      // Specifically capture MD instructions if provided during override
+      if (isMD) reqst.mdInstructions = comment;
+
       reqst.approvalHistory.push({ 
-        actorRole: 'Super Admin', 
+        actorRole, 
         actorName, 
-        action: 'Force Approved (Override)', 
-        comment: `ADMIN OVERRIDE: ${comment}`, 
+        action: isMD ? 'MD Override (FC Bypass)' : 'Admin Force Approve', 
+        comment: `BYPASS OVERRIDE: ${comment}`, 
         date: new Date() 
       });
-      await reqst.save();
 
-      const adminEmail = `
-        <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px;">
-          <h2 style="color: #A67C52;">Requisition Fast-Tracked</h2>
-          <p>Your request for <strong>${reqst.vendorName}</strong> was approved by the System Administrator.</p>
-          <p><strong>Final Status:</strong> PAID</p>
-        </div>
-      `;
-      await sendEmail(reqst.requesterEmail, "Urgent Update: Requisition Paid", adminEmail);
-      return res.json({ msg: "Admin Override Successful" });
+      await reqst.save();
+      return res.json({ msg: isMD ? "MD Override Successful" : "Admin Override Successful" });
     }
 
     // --- STANDARD WORKFLOW PROGRESSION ---
@@ -174,6 +171,12 @@ router.post('/action/:id', async (req, res) => {
     
     if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
       reqst.currentStage = workflow[currentIndex + 1];
+      
+      // Save MD instructions specifically during the standard MD stage
+      if (actorRole === 'MD') {
+        reqst.mdInstructions = comment;
+      }
+
       reqst.approvalHistory.push({ actorRole, actorName, action, comment, date: new Date() });
     }
 
@@ -185,10 +188,8 @@ router.post('/action/:id', async (req, res) => {
 
     const progressEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px;">
-        <h2 style="color: #A67C52;">Requisition Pipeline Update</h2>
-        <p>Your requisition for <strong>${reqst.vendorName}</strong> is moving forward.</p>
-        <p><strong>Current Stage:</strong> <span style="color: #A67C52; font-weight: bold;">${reqst.currentStage}</span></p>
-        <p style="font-size: 12px;">Updated by: ${actorName} (${actorRole})</p>
+        <h2 style="color: #A67C52;">Pipeline Update</h2>
+        <p>Your requisition for <strong>${reqst.vendorName}</strong> has moved to <strong>${reqst.currentStage}</strong>.</p>
       </div>
     `;
     await sendEmail(reqst.requesterEmail, "Requisition Progress Update", progressEmail);
