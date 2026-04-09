@@ -4,6 +4,7 @@ const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Requisition = require('../models/Requisition');
+const User = require('../models/User'); // Required for dynamic email lookups
 const sendEmail = require('../utils/mailer');
 
 // --- CLOUDINARY CONFIGURATION ---
@@ -150,7 +151,6 @@ router.post('/action/:id', async (req, res) => {
       reqst.currentStage = isMD ? 'ACCOUNTS' : 'PAID';
       reqst.status = isMD ? 'Pending' : 'Paid';
       
-      // Specifically capture MD instructions if provided during override
       if (isMD) reqst.mdInstructions = comment;
 
       reqst.approvalHistory.push({ 
@@ -162,6 +162,16 @@ router.post('/action/:id', async (req, res) => {
       });
 
       await reqst.save();
+
+      // If MD overrides, immediately notify the Accountant
+      if (isMD) {
+        const accountant = await User.findOne({ role: 'Accountant' });
+        if (accountant) {
+            const urgentEmail = `<p>MD has overridden FC stage for <strong>${reqst.vendorName}</strong>. Please process payment.</p>`;
+            await sendEmail(accountant.email, "Urgent: MD Override for Requisition", urgentEmail);
+        }
+      }
+
       return res.json({ msg: isMD ? "MD Override Successful" : "Admin Override Successful" });
     }
 
@@ -172,7 +182,6 @@ router.post('/action/:id', async (req, res) => {
     if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
       reqst.currentStage = workflow[currentIndex + 1];
       
-      // Save MD instructions specifically during the standard MD stage
       if (actorRole === 'MD') {
         reqst.mdInstructions = comment;
       }
@@ -186,13 +195,27 @@ router.post('/action/:id', async (req, res) => {
 
     await reqst.save();
 
-    const progressEmail = `
-      <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px;">
-        <h2 style="color: #A67C52;">Pipeline Update</h2>
-        <p>Your requisition for <strong>${reqst.vendorName}</strong> has moved to <strong>${reqst.currentStage}</strong>.</p>
-      </div>
-    `;
-    await sendEmail(reqst.requesterEmail, "Requisition Progress Update", progressEmail);
+    // --- DYNAMIC EMAIL NOTIFICATION BASED ON ROLE ---
+    const roleMapping = {
+        'FC': 'FC',
+        'MD': 'MD',
+        'ACCOUNTS': 'Accountant'
+    };
+
+    const nextRole = roleMapping[reqst.currentStage];
+    if (nextRole) {
+        const nextUser = await User.findOne({ role: nextRole });
+        if (nextUser) {
+            const progressEmail = `
+                <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px;">
+                    <h2 style="color: #A67C52;">Approval Required: ${reqst.currentStage}</h2>
+                    <p>Requisition for <strong>${reqst.vendorName}</strong> is now at your stage.</p>
+                    <a href="https://bricks-requisition-app.vercel.app/dashboard">View Dashboard</a>
+                </div>
+            `;
+            await sendEmail(nextUser.email, `Action Required: ${reqst.currentStage} Approval`, progressEmail);
+        }
+    }
 
     res.json({ msg: `Approved! Now at ${reqst.currentStage}`, data: reqst });
 
