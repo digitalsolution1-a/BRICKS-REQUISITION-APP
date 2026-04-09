@@ -5,6 +5,13 @@ const bcrypt = require('bcryptjs');
 const User = require('./models/User'); 
 
 const usersToCreate = [
+  // --- SUPER ADMIN (System Control) ---
+  { 
+    email: 'digital.solutions@brickslimited.com', 
+    role: 'Admin', 
+    name: 'Digital Solutions' 
+  },
+
   // --- WORKFLOW CRITICAL ROLES ---
   { 
     email: 'emmanuel.maiguwa@brickslimited.com', 
@@ -28,7 +35,6 @@ const usersToCreate = [
   { email: 'jesse.nwaigwe@brickslimited.com', role: 'HOD', name: 'Jesse Nwaigwe' },
   { email: 'crewing@brickslimited.com', role: 'HOD', name: 'Crewing Dept' },
   { email: 'mayowa.segun@brickslimited.com', role: 'HOD', name: 'Mayowa Segun' },
-  { email: 'digital.solutions@brickslimited.com', role: 'HOD', name: 'Digital Solutions' },
   { email: 'hauwa.garba@brickslimited.com', role: 'HOD', name: 'Hauwa Garba' },
   { email: 'jp.ino@brickslimited.com', role: 'HOD', name: 'JP Ino' },
   { email: 'risikat.ibrahim@brickslimited.com', role: 'HOD', name: 'Risikat Ibrahim' },
@@ -49,8 +55,8 @@ const seedDB = async () => {
     console.log("⚓ Connected to BRICKS DB for seeding...");
 
     for (const u of usersToCreate) {
-      // Generate a unique password based on the first name + 2026!
-      // Example: Joshua -> Joshua2026!
+      // Generate a unique password: First Name + 2026!
+      // Example: Digital -> Digital2026!
       const firstName = u.name.split(' ')[0];
       const plainPassword = `${firstName}2026!`; 
       const hashedPassword = await bcrypt.hash(plainPassword, 10);
@@ -67,7 +73,7 @@ const seedDB = async () => {
       console.log(`✅ Role: ${u.role.padEnd(12)} | User: ${u.email.padEnd(35)} | PW: ${plainPassword}`);
     }
 
-    console.log("\n🚢 All maritime personnel successfully registered. Joshua Omotoso added as HOD.");
+    console.log("\n🚢 Permissions Updated: Digital Solutions is Admin. MD is strictly Emmanuel.");
     process.exit();
   } catch (err) {
     console.error("❌ Seeding Error:", err);
