@@ -28,14 +28,18 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB Limit
 });
 
-// 1. GET Pending Requisitions (Filtered by Role for Dashboard)
+// 1. GET Pending Requisitions (Filtered by Role & Case-Insensitive Email)
 router.get('/pending/:role', async (req, res) => {
   const { role } = req.params;
+  const userEmail = req.query.email; // Pass email as a query param for HOD filtering
+
   try {
     let query = { status: 'Pending' };
 
-    if (role === 'HOD') {
+    if (role === 'HOD' && userEmail) {
       query.currentStage = 'HOD';
+      // Case-insensitive match for the selected HOD email
+      query.hodForApproval = { $regex: new RegExp(`^${userEmail}$`, 'i') };
     } else if (role === 'FC') {
       query.currentStage = 'FC';
     } else if (role === 'MD') {
@@ -52,11 +56,14 @@ router.get('/pending/:role', async (req, res) => {
   }
 });
 
-// 2. GET User History (For Profile Page)
-router.get('/user/:email', async (req, res) => {
+// 2. GET User History (For Staff Dashboard / Profile)
+router.get('/user/:userId', async (req, res) => {
   try {
     const history = await Requisition.find({ 
-      requesterEmail: req.params.email 
+      $or: [
+        { requester: req.params.userId },
+        { requesterEmail: req.query.email } // Backup check
+      ]
     }).sort({ createdAt: -1 });
     
     res.json(history);
@@ -66,21 +73,30 @@ router.get('/user/:email', async (req, res) => {
   }
 });
 
-// 3. Submit a New Requisition
+// 3. GET Single Requisition (For Edit Mode)
+router.get('/single/:id', async (req, res) => {
+  try {
+    const requisition = await Requisition.findById(req.params.id);
+    if (!requisition) return res.status(404).json({ error: "Requisition not found" });
+    res.json(requisition);
+  } catch (err) {
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// 4. Submit a New Requisition
 router.post('/submit', upload.single('document'), async (req, res) => {
   try {
-    // Standardizing "Others" mapping to match Model Enums exactly
     const finalClient = req.body.clientName === 'Others' ? req.body.otherClient : req.body.clientName;
     const finalVendor = req.body.vendorName === 'OTHERS' ? req.body.otherVendor : req.body.vendorName;
     
-    // Model expects "Others" (case sensitive)
     const finalCurrency = (req.body.currency === 'OTHER' || req.body.currency === 'Others') 
       ? 'Others' 
       : req.body.currency;
 
     const newReq = new Requisition({
       requestOption: req.body.requestOption || 'New',
-      requester: req.body.requester, // Critical ID mapping
+      requester: req.body.requester, 
       requesterName: req.body.requesterName,
       requesterEmail: req.body.requesterEmail,
       department: req.body.department,
@@ -121,12 +137,32 @@ router.post('/submit', upload.single('document'), async (req, res) => {
     await sendEmail(savedReq.hodForApproval, "Action Required: Requisition Approval", submissionEmail);
     res.status(201).json({ msg: "Submitted Successfully", data: savedReq });
   } catch (err) {
-    console.error("❌ Submission Error Details:", err);
+    console.error("❌ Submission Error:", err);
     res.status(400).json({ error: "Data Validation Error", details: err.message });
   }
 });
 
-// 4. Action Route (Approval/Decline/MD & Admin Override)
+// 5. Update/Edit Requisition (Staff Dash feature)
+router.put('/update/:id', upload.single('document'), async (req, res) => {
+  try {
+    const updateData = { ...req.body };
+    if (req.file) {
+      updateData.attachmentUrl = req.file.path;
+      updateData.attachmentName = req.file.originalname;
+    }
+    
+    // Ensure status is reset to Pending if they edited it after a rejection
+    updateData.status = 'Pending';
+    updateData.currentStage = 'HOD';
+
+    const updated = await Requisition.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    res.json({ msg: "Updated Successfully", data: updated });
+  } catch (err) {
+    res.status(500).json({ error: "Update failed", details: err.message });
+  }
+});
+
+// 6. Action Route (Approval/Decline/MD & Admin Override)
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride } = req.body; 
   
@@ -134,7 +170,6 @@ router.post('/action/:id', async (req, res) => {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
 
-    // --- HANDLE DECLINE ---
     if (action === 'Declined') {
       reqst.status = 'Declined';
       reqst.approvalHistory.push({ 
@@ -157,7 +192,6 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Requisition Declined" });
     }
 
-    // --- OVERRIDE LOGIC ---
     if (isOverride || (actorRole === 'MD' && reqst.currentStage === 'FC')) {
       const isMD = actorRole === 'MD';
       reqst.currentStage = isMD ? 'ACCOUNTS' : 'PAID';
@@ -176,7 +210,6 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Override Successful" });
     }
 
-    // --- STANDARD WORKFLOW ---
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
     const currentIndex = workflow.indexOf(reqst.currentStage);
     
