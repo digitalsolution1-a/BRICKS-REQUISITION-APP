@@ -13,7 +13,6 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// --- CLOUDINARY STORAGE ENGINE ---
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
@@ -25,26 +24,25 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ 
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB Limit
+  limits: { fileSize: 5 * 1024 * 1024 } 
 });
 
-// 1. GET Pending Requisitions (Filtered by Role & Case-Insensitive Email)
+// 1. GET Pending Requisitions (Filtered by Role & Email)
 router.get('/pending/:role', async (req, res) => {
   const { role } = req.params;
-  const userEmail = req.query.email; // Pass email as a query param for HOD filtering
+  const userEmail = req.query.email;
 
   try {
     let query = { status: 'Pending' };
 
     if (role === 'HOD' && userEmail) {
       query.currentStage = 'HOD';
-      // Case-insensitive match for the selected HOD email
       query.hodForApproval = { $regex: new RegExp(`^${userEmail}$`, 'i') };
     } else if (role === 'FC') {
       query.currentStage = 'FC';
     } else if (role === 'MD') {
-      query.currentStage = { $in: ['MD', 'FC'] };
-    } else if (role === 'Accountant') {
+      query.currentStage = 'MD';
+    } else if (role === 'Accountant' || role === 'ACCOUNTS') {
       query.currentStage = 'ACCOUNTS';
     }
 
@@ -56,28 +54,26 @@ router.get('/pending/:role', async (req, res) => {
   }
 });
 
-// 2. GET User History (For Staff Dashboard / Profile)
+// 2. GET User History
 router.get('/user/:userId', async (req, res) => {
   try {
     const history = await Requisition.find({ 
       $or: [
         { requester: req.params.userId },
-        { requesterEmail: req.query.email } // Backup check
+        { requesterEmail: req.query.email }
       ]
     }).sort({ createdAt: -1 });
-    
     res.json(history);
   } catch (err) {
-    console.error("❌ History Fetch Error:", err.message);
-    res.status(500).json({ error: "Could not retrieve user history" });
+    res.status(500).json({ error: "Could not retrieve history" });
   }
 });
 
-// 3. GET Single Requisition (For Edit Mode)
+// 3. GET Single Requisition
 router.get('/single/:id', async (req, res) => {
   try {
     const requisition = await Requisition.findById(req.params.id);
-    if (!requisition) return res.status(404).json({ error: "Requisition not found" });
+    if (!requisition) return res.status(404).json({ error: "Not found" });
     res.json(requisition);
   } catch (err) {
     res.status(500).json({ error: "Internal Server Error" });
@@ -89,10 +85,7 @@ router.post('/submit', upload.single('document'), async (req, res) => {
   try {
     const finalClient = req.body.clientName === 'Others' ? req.body.otherClient : req.body.clientName;
     const finalVendor = req.body.vendorName === 'OTHERS' ? req.body.otherVendor : req.body.vendorName;
-    
-    const finalCurrency = (req.body.currency === 'OTHER' || req.body.currency === 'Others') 
-      ? 'Others' 
-      : req.body.currency;
+    const finalCurrency = (req.body.currency === 'OTHER' || req.body.currency === 'Others') ? 'Others' : req.body.currency;
 
     const newReq = new Requisition({
       requestOption: req.body.requestOption || 'New',
@@ -105,6 +98,8 @@ router.post('/submit', upload.single('document'), async (req, res) => {
       procurementType: req.body.procurementType || 'Direct Procurement',
       clientName: finalClient || 'N/A',
       vendorName: finalVendor || 'N/A',
+      otherClientDetails: req.body.otherClient,
+      otherVendorName: req.body.otherVendor,
       currency: finalCurrency, 
       otherCurrency: req.body.otherCurrency,
       amount: Number(req.body.amount),
@@ -121,28 +116,27 @@ router.post('/submit', upload.single('document'), async (req, res) => {
 
     const savedReq = await newReq.save();
     
+    // Email Template
     const submissionEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px; max-width: 600px;">
         <h2 style="color: #A67C52;">New Requisition Submission</h2>
         <p>A new requisition requires your approval.</p>
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;"/>
         <p><strong>Requester:</strong> ${savedReq.requesterName} (${savedReq.department})</p>
         <p><strong>Vendor:</strong> ${savedReq.vendorName}</p>
         <p><strong>Total Amount:</strong> <span style="font-size: 18px; color: #A67C52; font-weight: bold;">${savedReq.currency} ${savedReq.amount.toLocaleString()}</span></p>
         <br/>
-        <a href="https://bricks-requisition-app.vercel.app/dashboard" style="background: #A67C52; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 800; display: inline-block; font-size: 12px; text-transform: uppercase;">Review & Approve</a>
+        <a href="https://bricks-requisition-app.vercel.app/dashboard" style="background: #A67C52; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 800; display: inline-block;">Review & Approve</a>
       </div>
     `;
     
     await sendEmail(savedReq.hodForApproval, "Action Required: Requisition Approval", submissionEmail);
     res.status(201).json({ msg: "Submitted Successfully", data: savedReq });
   } catch (err) {
-    console.error("❌ Submission Error:", err);
     res.status(400).json({ error: "Data Validation Error", details: err.message });
   }
 });
 
-// 5. Update/Edit Requisition (Staff Dash feature)
+// 5. Update/Edit Requisition
 router.put('/update/:id', upload.single('document'), async (req, res) => {
   try {
     const updateData = { ...req.body };
@@ -150,8 +144,6 @@ router.put('/update/:id', upload.single('document'), async (req, res) => {
       updateData.attachmentUrl = req.file.path;
       updateData.attachmentName = req.file.originalname;
     }
-    
-    // Ensure status is reset to Pending if they edited it after a rejection
     updateData.status = 'Pending';
     updateData.currentStage = 'HOD';
 
@@ -162,7 +154,7 @@ router.put('/update/:id', upload.single('document'), async (req, res) => {
   }
 });
 
-// 6. Action Route (Approval/Decline/MD & Admin Override)
+// 6. Action Route (Approval/Decline)
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride } = req.body; 
   
@@ -172,78 +164,35 @@ router.post('/action/:id', async (req, res) => {
 
     if (action === 'Declined') {
       reqst.status = 'Declined';
-      reqst.approvalHistory.push({ 
-        actorRole, 
-        actorName, 
-        action, 
-        comment, 
-        timestamp: new Date() 
-      });
+      reqst.approvalHistory.push({ actorRole, actorName, action, comment });
       await reqst.save();
       
-      const declineEmail = `
-        <div style="font-family: sans-serif; border: 2px solid #d32f2f; padding: 25px; border-radius: 20px;">
-          <h2 style="color: #d32f2f;">Requisition Declined</h2>
-          <p>Your request for <strong>${reqst.vendorName}</strong> has been declined.</p>
-          <p><strong>Reason:</strong> ${comment || "No comment provided."}</p>
-        </div>
-      `;
+      const declineEmail = `<div style="padding: 20px;"><h2>Requisition Declined</h2><p><strong>Reason:</strong> ${comment}</p></div>`;
       await sendEmail(reqst.requesterEmail, "Requisition Status: Declined", declineEmail);
       return res.json({ msg: "Requisition Declined" });
     }
 
-    if (isOverride || (actorRole === 'MD' && reqst.currentStage === 'FC')) {
-      const isMD = actorRole === 'MD';
-      reqst.currentStage = isMD ? 'ACCOUNTS' : 'PAID';
-      reqst.status = isMD ? 'Pending' : 'Paid';
-      if (isMD) reqst.mdInstructions = comment;
-
-      reqst.approvalHistory.push({ 
-        actorRole, 
-        actorName, 
-        action: isMD ? 'MD Override (FC Bypass)' : 'Admin Force Approve', 
-        comment: `BYPASS OVERRIDE: ${comment}`, 
-        timestamp: new Date() 
-      });
-
-      await reqst.save();
-      return res.json({ msg: "Override Successful" });
-    }
-
+    // Workflow: HOD -> FC -> MD -> ACCOUNTS -> PAID
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
-    const currentIndex = workflow.indexOf(reqst.currentStage);
     
-    if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
-      reqst.currentStage = workflow[currentIndex + 1];
-      if (actorRole === 'MD') reqst.mdInstructions = comment;
-
-      reqst.approvalHistory.push({ 
-        actorRole, 
-        actorName, 
-        action, 
-        comment, 
-        timestamp: new Date() 
-      });
+    if (isOverride) {
+       reqst.currentStage = actorRole === 'MD' ? 'ACCOUNTS' : 'PAID';
+       reqst.status = actorRole === 'MD' ? 'Pending' : 'Paid';
+    } else {
+       const currentIndex = workflow.indexOf(reqst.currentStage);
+       if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
+         reqst.currentStage = workflow[currentIndex + 1];
+       }
     }
 
-    if (reqst.currentStage === 'PAID') {
-      reqst.status = 'Paid';
-    }
+    if (actorRole === 'MD') reqst.mdInstructions = comment;
+    if (reqst.currentStage === 'PAID') reqst.status = 'Paid';
 
+    reqst.approvalHistory.push({ actorRole, actorName, action, comment });
     await reqst.save();
 
-    const progressEmail = `
-      <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px;">
-        <h2 style="color: #A67C52;">Requisition Pipeline Update</h2>
-        <p>Your requisition for <strong>${reqst.vendorName}</strong> has been reviewed and moved to <strong>${reqst.currentStage}</strong>.</p>
-      </div>
-    `;
-    await sendEmail(reqst.requesterEmail, "Requisition Progress Update", progressEmail);
-
     res.json({ msg: `Approved! Now at ${reqst.currentStage}`, data: reqst });
-
   } catch (err) {
-    console.error("❌ Action Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
