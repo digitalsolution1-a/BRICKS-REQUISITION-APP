@@ -67,7 +67,7 @@ const RequisitionSchema = new mongoose.Schema({
   },
   currency: { 
     type: String, 
-    enum: ['USD', 'NGN', 'Naira', 'Others'], 
+    enum: ['USD', 'NGN', 'Naira', 'Others', 'OTHER'], 
     required: true, 
     default: 'NGN' 
   },
@@ -81,7 +81,7 @@ const RequisitionSchema = new mongoose.Schema({
   amountInWords: { 
     type: String, 
     required: true 
-  }, // Fixed: Added to match frontend data
+  },
   dueDate: { 
     type: Date, 
     required: true 
@@ -123,7 +123,7 @@ const RequisitionSchema = new mongoose.Schema({
     timestamp: { type: Date, default: Date.now }
   }]
 }, { 
-  timestamps: true // Automatically creates createdAt and updatedAt
+  timestamps: true 
 });
 
 module.exports = mongoose.model('Requisition', RequisitionSchema);
