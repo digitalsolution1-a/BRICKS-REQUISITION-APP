@@ -9,7 +9,7 @@ const sendEmail = require('../utils/mailer');
 // --- CLOUDINARY CONFIGURATION ---
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
+  api_key: process.env.CLOCDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
@@ -34,13 +34,11 @@ router.get('/pending/:role', async (req, res) => {
   try {
     let query = { status: 'Pending' };
 
-    // Role-specific stage filtering
     if (role === 'HOD') {
       query.currentStage = 'HOD';
     } else if (role === 'FC') {
       query.currentStage = 'FC';
     } else if (role === 'MD') {
-      // MD sees standard MD items OR FC items for override capability
       query.currentStage = { $in: ['MD', 'FC'] };
     } else if (role === 'Accountant') {
       query.currentStage = 'ACCOUNTS';
@@ -71,26 +69,28 @@ router.get('/user/:email', async (req, res) => {
 // 3. Submit a New Requisition
 router.post('/submit', upload.single('document'), async (req, res) => {
   try {
-    // Handle conditional fields for "Others"
+    // Standardizing "Others" mapping to match Model Enums exactly
     const finalClient = req.body.clientName === 'Others' ? req.body.otherClient : req.body.clientName;
     const finalVendor = req.body.vendorName === 'OTHERS' ? req.body.otherVendor : req.body.vendorName;
-    const finalCurrency = req.body.currency === 'OTHER' ? req.body.otherCurrency : req.body.currency;
+    
+    // Model expects "Others" (case sensitive)
+    const finalCurrency = (req.body.currency === 'OTHER' || req.body.currency === 'Others') 
+      ? 'Others' 
+      : req.body.currency;
 
     const newReq = new Requisition({
       requestOption: req.body.requestOption || 'New',
-      
-      // --- CRITICAL UPDATE: Mapping the required User ID ---
-      requester: req.body.requester, 
-      
+      requester: req.body.requester, // Critical ID mapping
       requesterName: req.body.requesterName,
       requesterEmail: req.body.requesterEmail,
       department: req.body.department,
       hodForApproval: req.body.hodForApproval,
       requestType: req.body.requestType || 'Internal Operation/Request',
+      procurementType: req.body.procurementType || 'Direct Procurement',
       clientName: finalClient || 'N/A',
-      procurementType: req.body.procurementType,
-      vendorName: finalVendor,
+      vendorName: finalVendor || 'N/A',
       currency: finalCurrency, 
+      otherCurrency: req.body.otherCurrency,
       amount: Number(req.body.amount),
       amountInWords: req.body.amountInWords,
       dueDate: req.body.dueDate,
@@ -100,18 +100,18 @@ router.post('/submit', upload.single('document'), async (req, res) => {
       attachmentUrl: req.file ? req.file.path : null,
       attachmentName: req.file ? req.file.originalname : null,
       currentStage: 'HOD',
-      status: 'Pending',
-      createdAt: new Date()
+      status: 'Pending'
     });
 
     const savedReq = await newReq.save();
     
     const submissionEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px; max-width: 600px;">
-        <h2 style="color: #A67C52;">New Fleet Requisition</h2>
-        <p>A new requisition has been submitted for your professional approval.</p>
+        <h2 style="color: #A67C52;">New Requisition Submission</h2>
+        <p>A new requisition requires your approval.</p>
         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;"/>
         <p><strong>Requester:</strong> ${savedReq.requesterName} (${savedReq.department})</p>
+        <p><strong>Vendor:</strong> ${savedReq.vendorName}</p>
         <p><strong>Total Amount:</strong> <span style="font-size: 18px; color: #A67C52; font-weight: bold;">${savedReq.currency} ${savedReq.amount.toLocaleString()}</span></p>
         <br/>
         <a href="https://bricks-requisition-app.vercel.app/dashboard" style="background: #A67C52; color: white; padding: 14px 28px; text-decoration: none; border-radius: 10px; font-weight: 800; display: inline-block; font-size: 12px; text-transform: uppercase;">Review & Approve</a>
@@ -121,7 +121,7 @@ router.post('/submit', upload.single('document'), async (req, res) => {
     await sendEmail(savedReq.hodForApproval, "Action Required: Requisition Approval", submissionEmail);
     res.status(201).json({ msg: "Submitted Successfully", data: savedReq });
   } catch (err) {
-    console.error("Submission Error Details:", err);
+    console.error("❌ Submission Error Details:", err);
     res.status(400).json({ error: "Data Validation Error", details: err.message });
   }
 });
@@ -157,13 +157,11 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Requisition Declined" });
     }
 
-    // --- OVERRIDE LOGIC (Admin or MD Bypassing FC) ---
+    // --- OVERRIDE LOGIC ---
     if (isOverride || (actorRole === 'MD' && reqst.currentStage === 'FC')) {
       const isMD = actorRole === 'MD';
-      
       reqst.currentStage = isMD ? 'ACCOUNTS' : 'PAID';
       reqst.status = isMD ? 'Pending' : 'Paid';
-      
       if (isMD) reqst.mdInstructions = comment;
 
       reqst.approvalHistory.push({ 
@@ -175,19 +173,16 @@ router.post('/action/:id', async (req, res) => {
       });
 
       await reqst.save();
-      return res.json({ msg: isMD ? "MD Override Successful" : "Admin Override Successful" });
+      return res.json({ msg: "Override Successful" });
     }
 
-    // --- STANDARD WORKFLOW PROGRESSION ---
+    // --- STANDARD WORKFLOW ---
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
     const currentIndex = workflow.indexOf(reqst.currentStage);
     
     if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
       reqst.currentStage = workflow[currentIndex + 1];
-      
-      if (actorRole === 'MD') {
-        reqst.mdInstructions = comment;
-      }
+      if (actorRole === 'MD') reqst.mdInstructions = comment;
 
       reqst.approvalHistory.push({ 
         actorRole, 
@@ -206,8 +201,8 @@ router.post('/action/:id', async (req, res) => {
 
     const progressEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px;">
-        <h2 style="color: #A67C52;">Pipeline Update</h2>
-        <p>Your requisition for <strong>${reqst.vendorName}</strong> has moved to <strong>${reqst.currentStage}</strong>.</p>
+        <h2 style="color: #A67C52;">Requisition Pipeline Update</h2>
+        <p>Your requisition for <strong>${reqst.vendorName}</strong> has been reviewed and moved to <strong>${reqst.currentStage}</strong>.</p>
       </div>
     `;
     await sendEmail(reqst.requesterEmail, "Requisition Progress Update", progressEmail);
