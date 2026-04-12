@@ -24,7 +24,7 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ 
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 } 
+  limits: { fileSize: 10 * 1024 * 1024 } // Increased to 10MB for larger PDFs
 });
 
 // 1. GET Pending Requisitions (Filtered by Role & Email)
@@ -35,7 +35,6 @@ router.get('/pending/:role', async (req, res) => {
   try {
     let query = { status: 'Pending' };
 
-    // Unified Role Matching
     if (role.toUpperCase() === 'HOD' && userEmail) {
       query.currentStage = 'HOD';
       query.hodForApproval = { $regex: new RegExp(`^${userEmail}$`, 'i') };
@@ -55,11 +54,9 @@ router.get('/pending/:role', async (req, res) => {
   }
 });
 
-// 2. GET Global History (For Admin/Accountant Archive)
-// This route satisfies the dashboard "History" tab
+// 2. GET Global History
 router.get('/history', async (req, res) => {
   try {
-    // History includes anything Declined or Paid
     const history = await Requisition.find({ 
       $or: [
         { status: 'Paid' },
@@ -73,7 +70,7 @@ router.get('/history', async (req, res) => {
   }
 });
 
-// 3. GET User-Specific History (For Staff view)
+// 3. GET User-Specific History
 router.get('/user/:userId', async (req, res) => {
   try {
     const history = await Requisition.find({ 
@@ -127,8 +124,11 @@ router.post('/submit', upload.single('document'), async (req, res) => {
       modeOfPayment: req.body.modeOfPayment,
       beneficiaryDetails: req.body.beneficiaryDetails || "N/A",
       requestNarrative: req.body.requestNarrative || "N/A",
+      // FIX: Ensure the full Cloudinary secure URL is captured
       attachmentUrl: req.file ? req.file.path : null,
       attachmentName: req.file ? req.file.originalname : null,
+      supportingDocument: req.file ? req.file.path : null, // Mirror for safety
+      cloudinaryId: req.file ? req.file.filename : null,
       currentStage: 'HOD',
       status: 'Pending'
     });
@@ -150,11 +150,12 @@ router.post('/submit', upload.single('document'), async (req, res) => {
     await sendEmail(savedReq.hodForApproval, "Action Required: Requisition Approval", submissionEmail);
     res.status(201).json({ msg: "Submitted Successfully", data: savedReq });
   } catch (err) {
+    console.error("Submission Error:", err);
     res.status(400).json({ error: "Data Validation Error", details: err.message });
   }
 });
 
-// 6. Action Route (Approval/Decline/Disbursement)
+// 6. Action Route
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride } = req.body; 
   
@@ -162,7 +163,6 @@ router.post('/action/:id', async (req, res) => {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
 
-    // Handle Declines
     if (action === 'Declined' || action === 'Rejected') {
       reqst.status = 'Declined';
       reqst.approvalHistory.push({ actorRole, actorName, action, comment });
@@ -173,7 +173,6 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Requisition Declined" });
     }
 
-    // Workflow: HOD -> FC -> MD -> ACCOUNTS -> PAID
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
     
     if (isOverride) {
@@ -185,14 +184,12 @@ router.post('/action/:id', async (req, res) => {
        }
     }
 
-    // Specific logic for MD comments
     if (actorRole === 'MD') reqst.mdInstructions = comment;
 
-    // Specific logic for Accountant final disbursement
     if (reqst.currentStage === 'PAID' || action === 'Paid') {
       reqst.status = 'Paid';
       reqst.currentStage = 'PAID';
-      reqst.disbursementDate = new Date(); // Logs payment time
+      reqst.disbursementDate = new Date();
     }
 
     reqst.approvalHistory.push({ actorRole, actorName, action, comment });
