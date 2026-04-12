@@ -108,10 +108,18 @@ const RequisitionSchema = new mongoose.Schema({
     default: 'Pending' 
   },
   
-  // Section 5: Specific Role Instructions
+  // Section 5: Specific Role Instructions & Audit
   mdInstructions: { 
     type: String, 
     default: '' 
+  },
+  // NEW: Added for permanent Treasury Archive records
+  disbursementDate: {
+    type: Date
+  },
+  paymentReference: {
+    type: String,
+    default: ''
   },
 
   // Section 6: History
