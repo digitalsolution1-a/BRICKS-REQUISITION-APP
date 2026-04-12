@@ -35,14 +35,15 @@ router.get('/pending/:role', async (req, res) => {
   try {
     let query = { status: 'Pending' };
 
-    if (role === 'HOD' && userEmail) {
+    // Unified Role Matching
+    if (role.toUpperCase() === 'HOD' && userEmail) {
       query.currentStage = 'HOD';
       query.hodForApproval = { $regex: new RegExp(`^${userEmail}$`, 'i') };
-    } else if (role === 'FC') {
+    } else if (role.toUpperCase() === 'FC') {
       query.currentStage = 'FC';
-    } else if (role === 'MD') {
+    } else if (role.toUpperCase() === 'MD') {
       query.currentStage = 'MD';
-    } else if (role === 'Accountant' || role === 'ACCOUNTS') {
+    } else if (role.toUpperCase() === 'ACCOUNTANT' || role.toUpperCase() === 'ACCOUNTS') {
       query.currentStage = 'ACCOUNTS';
     }
 
@@ -54,7 +55,25 @@ router.get('/pending/:role', async (req, res) => {
   }
 });
 
-// 2. GET User History
+// 2. GET Global History (For Admin/Accountant Archive)
+// This route satisfies the dashboard "History" tab
+router.get('/history', async (req, res) => {
+  try {
+    // History includes anything Declined or Paid
+    const history = await Requisition.find({ 
+      $or: [
+        { status: 'Paid' },
+        { status: 'Declined' },
+        { currentStage: 'PAID' }
+      ]
+    }).sort({ updatedAt: -1 });
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: "Could not retrieve history" });
+  }
+});
+
+// 3. GET User-Specific History (For Staff view)
 router.get('/user/:userId', async (req, res) => {
   try {
     const history = await Requisition.find({ 
@@ -65,11 +84,11 @@ router.get('/user/:userId', async (req, res) => {
     }).sort({ createdAt: -1 });
     res.json(history);
   } catch (err) {
-    res.status(500).json({ error: "Could not retrieve history" });
+    res.status(500).json({ error: "Could not retrieve user history" });
   }
 });
 
-// 3. GET Single Requisition
+// 4. GET Single Requisition
 router.get('/single/:id', async (req, res) => {
   try {
     const requisition = await Requisition.findById(req.params.id);
@@ -80,7 +99,7 @@ router.get('/single/:id', async (req, res) => {
   }
 });
 
-// 4. Submit a New Requisition
+// 5. Submit a New Requisition
 router.post('/submit', upload.single('document'), async (req, res) => {
   try {
     const finalClient = req.body.clientName === 'Others' ? req.body.otherClient : req.body.clientName;
@@ -116,7 +135,6 @@ router.post('/submit', upload.single('document'), async (req, res) => {
 
     const savedReq = await newReq.save();
     
-    // Email Template
     const submissionEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px; max-width: 600px;">
         <h2 style="color: #A67C52;">New Requisition Submission</h2>
@@ -136,25 +154,7 @@ router.post('/submit', upload.single('document'), async (req, res) => {
   }
 });
 
-// 5. Update/Edit Requisition
-router.put('/update/:id', upload.single('document'), async (req, res) => {
-  try {
-    const updateData = { ...req.body };
-    if (req.file) {
-      updateData.attachmentUrl = req.file.path;
-      updateData.attachmentName = req.file.originalname;
-    }
-    updateData.status = 'Pending';
-    updateData.currentStage = 'HOD';
-
-    const updated = await Requisition.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    res.json({ msg: "Updated Successfully", data: updated });
-  } catch (err) {
-    res.status(500).json({ error: "Update failed", details: err.message });
-  }
-});
-
-// 6. Action Route (Approval/Decline)
+// 6. Action Route (Approval/Decline/Disbursement)
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride } = req.body; 
   
@@ -162,7 +162,8 @@ router.post('/action/:id', async (req, res) => {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
 
-    if (action === 'Declined') {
+    // Handle Declines
+    if (action === 'Declined' || action === 'Rejected') {
       reqst.status = 'Declined';
       reqst.approvalHistory.push({ actorRole, actorName, action, comment });
       await reqst.save();
@@ -177,7 +178,6 @@ router.post('/action/:id', async (req, res) => {
     
     if (isOverride) {
        reqst.currentStage = actorRole === 'MD' ? 'ACCOUNTS' : 'PAID';
-       reqst.status = actorRole === 'MD' ? 'Pending' : 'Paid';
     } else {
        const currentIndex = workflow.indexOf(reqst.currentStage);
        if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
@@ -185,13 +185,20 @@ router.post('/action/:id', async (req, res) => {
        }
     }
 
+    // Specific logic for MD comments
     if (actorRole === 'MD') reqst.mdInstructions = comment;
-    if (reqst.currentStage === 'PAID') reqst.status = 'Paid';
+
+    // Specific logic for Accountant final disbursement
+    if (reqst.currentStage === 'PAID' || action === 'Paid') {
+      reqst.status = 'Paid';
+      reqst.currentStage = 'PAID';
+      reqst.disbursementDate = new Date(); // Logs payment time
+    }
 
     reqst.approvalHistory.push({ actorRole, actorName, action, comment });
     await reqst.save();
 
-    res.json({ msg: `Approved! Now at ${reqst.currentStage}`, data: reqst });
+    res.json({ msg: `Action successful: ${action}`, data: reqst });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
