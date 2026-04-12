@@ -92,9 +92,11 @@ const RequisitionSchema = new mongoose.Schema({
   },
 
   // --- FILE ATTACHMENT FIELDS ---
+  // Updated to ensure consistency with Cloudinary & Frontend
   attachmentUrl: { type: String },   
   attachmentName: { type: String },  
   supportingDocument: { type: String }, 
+  cloudinaryId: { type: String }, // Stores public_id for future management
 
   // Section 4: Workflow Tracking
   currentStage: { 
@@ -113,7 +115,6 @@ const RequisitionSchema = new mongoose.Schema({
     type: String, 
     default: '' 
   },
-  // NEW: Added for permanent Treasury Archive records
   disbursementDate: {
     type: Date
   },
