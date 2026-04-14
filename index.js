@@ -6,18 +6,16 @@ require('dotenv').config();
 const app = express();
 
 // --- 1. Middleware ---
-// Optimized for Cloud Deployment: Allows Local, Render, and Vercel domains
 const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:3000',
   'https://bricks-requisition-app-12.onrender.com', // Render Frontend
-  /\.vercel\.app$/                                  // Any Vercel deployment
+  /\.vercel\.app$/                                   // Any Vercel deployment
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     
     const isAllowed = allowedOrigins.some(allowed => {
@@ -50,7 +48,6 @@ const connectDB = async () => {
   } catch (err) {
     console.error("❌ Database Connection Error:");
     console.error(`Reason: ${err.message}`);
-    console.log("💡 Check: IP Whitelist (0.0.0.0/0) and Credentials in Render Environment");
   }
 };
 
@@ -59,18 +56,25 @@ connectDB();
 // --- 3. Request Logger ---
 app.use((req, res, next) => {
   console.log(`📡 ${req.method} request to: ${req.url}`);
-  if (process.env.NODE_ENV !== 'production' && req.method === 'POST') {
-    console.log('📦 Body:', req.body);
-  }
   next();
 });
 
 // --- 4. Route Registration ---
+// We use individual try-catch blocks to ensure one failing route doesn't crash the whole server
 try {
   app.use('/api/auth', require('./routes/auth'));
+  console.log("📑 Auth Routes Loaded");
+
   app.use('/api/requisitions', require('./routes/requisition'));
+  console.log("📑 Requisition Routes Loaded");
+
+  // --- ADDED: USER MANAGEMENT ROUTES ---
+  // Matches your frontend's ${API_BASE_URL}/users path
+  app.use('/api/users', require('./routes/user')); 
+  console.log("📑 User Management Routes Loaded");
+
 } catch (error) {
-  console.warn("⚠️ Route Loading Error: Check folder structure or missing route files.");
+  console.error("⚠️ Route Loading Error:", error.message);
 }
 
 // --- 5. Health Check ---
@@ -80,8 +84,7 @@ app.get('/', (req, res) => {
     status: "Active",
     portal: "BRICKS Requisition API",
     database: dbStatus,
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -96,8 +99,6 @@ app.use((err, req, res, next) => {
 
 // --- 7. Server Startup ---
 const PORT = process.env.PORT || 5000;
-// We use 0.0.0.0 for Render/Heroku port binding
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 BRICKS Server running on port ${PORT}`);
-  console.log(`🔗 Production URL: https://bricks-requisition-app.onrender.com`);
 });
