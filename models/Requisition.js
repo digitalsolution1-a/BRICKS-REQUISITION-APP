@@ -1,138 +1,70 @@
-const mongoose = require('mongoose');
-
-const RequisitionSchema = new mongoose.Schema({
-  // Section 1: Basic Info
-  requestOption: { 
-    type: String, 
-    default: 'New' 
-  }, 
-  requester: { 
-    type: String, 
-    required: true 
-  }, 
-  requesterEmail: { 
-    type: String, 
-    required: true 
-  },
-  requesterName: { 
-    type: String, 
-    required: true 
-  },
-  requestDate: { 
-    type: Date, 
-    default: Date.now 
-  },
-  department: { 
-    type: String, 
-    required: true 
-  },
-  hodForApproval: { 
-    type: String, 
-    required: true 
-  }, 
-
-  // Section 2: Procurement Details
-  requestType: { 
-    type: String, 
-    default: 'Internal Operation/Request' 
-  }, 
-  clientName: { 
-    type: String, 
-    default: 'N/A' 
-  }, 
-  otherClientDetails: { 
-    type: String 
-  }, 
-  procurementType: { 
-    type: String, 
-    default: 'Direct Procurement' 
-  },
-  vendorName: { 
-    type: String, 
-    default: 'N/A' 
-  },
-  otherVendorName: { 
-    type: String 
-  },
-
-  // Section 3: Payment & Narrative
-  modeOfPayment: { 
-    type: String, 
-    default: 'Cash' 
-  },
-  beneficiaryDetails: { 
-    type: String, 
-    required: true, 
-    default: 'N/A' 
-  },
-  currency: { 
-    type: String, 
-    enum: ['USD', 'NGN', 'Naira', 'Others', 'OTHER'], 
-    required: true, 
-    default: 'NGN' 
-  },
-  otherCurrency: { 
-    type: String 
-  },
-  amount: { 
-    type: Number, 
-    required: true 
-  },
-  amountInWords: { 
-    type: String, 
-    required: true 
-  },
-  dueDate: { 
-    type: Date, 
-    required: true 
-  },
-  requestNarrative: { 
-    type: String, 
-    required: true 
-  },
-
-  // --- FILE ATTACHMENT FIELDS ---
-  // Updated to ensure consistency with Cloudinary & Frontend
-  attachmentUrl: { type: String },   
-  attachmentName: { type: String },  
-  supportingDocument: { type: String }, 
-  cloudinaryId: { type: String }, // Stores public_id for future management
-
-  // Section 4: Workflow Tracking
-  currentStage: { 
-    type: String, 
-    enum: ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'], 
-    default: 'HOD' 
-  },
-  status: { 
-    type: String, 
-    enum: ['Pending', 'Approved', 'Declined', 'Paid'], 
-    default: 'Pending' 
-  },
-  
-  // Section 5: Specific Role Instructions & Audit
-  mdInstructions: { 
-    type: String, 
-    default: '' 
-  },
-  disbursementDate: {
-    type: Date
-  },
-  paymentReference: {
-    type: String,
-    default: ''
-  },
-
-  // Section 6: History
-  approvalHistory: [{
-    actorRole: { type: String },
-    actorName: { type: String },
-    action: { type: String }, 
-    comment: { type: String },
-    timestamp: { type: Date, default: Date.now }
-  }]
-}, { 
-  timestamps: true 
+// 2. UPDATED: GET History (Now includes requisitions that moved past a stage)
+router.get('/history/:role', async (req, res) => {
+  const { role } = req.params;
+  try {
+    // Show anything that is No Longer at their stage OR is finalized
+    const history = await Requisition.find({
+      $or: [
+        { status: { $in: ['Paid', 'Declined'] } },
+        { approvalHistory: { $elemMatch: { actorRole: role.toUpperCase() } } }
+      ]
+    }).sort({ updatedAt: -1 });
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: "Could not retrieve history" });
+  }
 });
 
-module.exports = mongoose.model('Requisition', RequisitionSchema);
+// 6. UPDATED: Action Route (Enhanced for MD Override & Instruction saving)
+router.post('/action/:id', async (req, res) => {
+  const { action, comment, actorRole, actorName, isOverride } = req.body; 
+  
+  try {
+    const reqst = await Requisition.findById(req.params.id);
+    if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
+
+    // Handle Declines
+    if (action === 'Declined' || action === 'Rejected') {
+      reqst.status = 'Declined';
+      reqst.approvalHistory.push({ actorRole, actorName, action, comment });
+      await reqst.save();
+      
+      const declineEmail = `<div style="padding: 20px;"><h2>Requisition Declined</h2><p><strong>Reason:</strong> ${comment}</p></div>`;
+      await sendEmail(reqst.requesterEmail, "Requisition Status: Declined", declineEmail);
+      return res.json({ msg: "Requisition Declined" });
+    }
+
+    // Workflow Logic
+    const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
+    
+    if (isOverride) {
+       // MD Override pushes it straight to Accounts
+       reqst.currentStage = 'ACCOUNTS';
+    } else {
+       const currentIndex = workflow.indexOf(reqst.currentStage);
+       if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
+         reqst.currentStage = workflow[currentIndex + 1];
+       }
+    }
+
+    // Special: Capture MD instructions in the specific field
+    if (actorRole === 'MD') {
+        reqst.mdInstructions = comment;
+    }
+
+    // Final Stage Check
+    if (reqst.currentStage === 'PAID' || action === 'Paid') {
+      reqst.status = 'Paid';
+      reqst.currentStage = 'PAID';
+      reqst.disbursementDate = new Date();
+    }
+
+    // Record in History
+    reqst.approvalHistory.push({ actorRole, actorName, action, comment });
+    await reqst.save();
+
+    res.json({ msg: `Action successful: ${action}`, data: reqst });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
