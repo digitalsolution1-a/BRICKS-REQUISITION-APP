@@ -54,24 +54,28 @@ const connectDB = async () => {
 connectDB();
 
 // --- 3. Request Logger ---
+// Useful for debugging 404s - watch your terminal to see the incoming paths
 app.use((req, res, next) => {
   console.log(`📡 ${req.method} request to: ${req.url}`);
   next();
 });
 
 // --- 4. Route Registration ---
-// We use individual try-catch blocks to ensure one failing route doesn't crash the whole server
 try {
+  // Auth Routes
   app.use('/api/auth', require('./routes/auth'));
   console.log("📑 Auth Routes Loaded");
 
+  // Requisition Routes
   app.use('/api/requisitions', require('./routes/requisition'));
   console.log("📑 Requisition Routes Loaded");
 
-  // --- ADDED: USER MANAGEMENT ROUTES ---
-  // Matches your frontend's ${API_BASE_URL}/users path
-  app.use('/api/users', require('./routes/user')); 
-  console.log("📑 User Management Routes Loaded");
+  // User Management Routes
+  // We register both versions to ensure frontend calls to /users OR /api/users both work
+  const userManagementRoutes = require('./routes/user');
+  app.use('/api/users', userManagementRoutes);
+  app.use('/users', userManagementRoutes); 
+  console.log("📑 User Management Routes Loaded (Primary & Alias)");
 
 } catch (error) {
   console.error("⚠️ Route Loading Error:", error.message);
