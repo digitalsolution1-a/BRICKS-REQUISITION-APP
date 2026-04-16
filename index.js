@@ -72,7 +72,7 @@ try {
 
   // User Management Routes
   // We register both versions to ensure frontend calls to /users OR /api/users both work
-  const userManagementRoutes = require('./routes/user');
+  const userManagementRoutes = require('./routes/users');
   app.use('/api/users', userManagementRoutes);
   app.use('/users', userManagementRoutes); 
   console.log("📑 User Management Routes Loaded (Primary & Alias)");
