@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 /**
@@ -48,7 +47,7 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// --- 2. REGISTER NEW PERSONNEL (Updated for Robust Provisioning) ---
+// --- 2. REGISTER NEW PERSONNEL ---
 router.post('/register', protect, async (req, res) => {
   try {
     if (!isAdmin(req.user)) {
@@ -65,22 +64,17 @@ router.post('/register', protect, async (req, res) => {
     const userExists = await User.findOne({ email });
     if (userExists) return res.status(400).json({ error: "USER ALREADY EXISTS" });
 
-    // Encrypt password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
     /**
-     * MAPPING LOGIC:
-     * We send both 'dept' and 'department' to handle variations in the 
-     * User Schema without causing a validation crash.
+     * NOTE: We are NOT hashing the password here.
+     * The pre-save hook in models/User.js handles the hashing automatically.
+     * Sending the plain password here prevents "Double Hashing" which causes login failure.
      */
     const newUser = await User.create({
       name, 
       email, 
-      password: hashedPassword, 
+      password, // Pass plain; Model hashes it
       role, 
-      department: dept || 'Operations', // Standard schema naming
-      dept: dept || 'Operations'       // Frontend naming
+      department: dept || 'Operations' // Matches the 'department' field in your Schema
     });
 
     res.status(201).json({ 
@@ -90,7 +84,6 @@ router.post('/register', protect, async (req, res) => {
 
   } catch (err) {
     console.error("PROVISIONING CRASH DETAILS:", err);
-    // Returning the actual error message helps us fix it if the schema is strict
     res.status(500).json({ error: `PROVISIONING FAILED: ${err.message}` });
   }
 });
