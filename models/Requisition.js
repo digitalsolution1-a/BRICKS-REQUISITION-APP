@@ -54,6 +54,15 @@ const RequisitionSchema = new mongoose.Schema({
   otherVendorName: { 
     type: String 
   },
+  // Added P.O Number & DA Ref No under procurement tracking
+  poNumber: {
+    type: String,
+    default: 'N/A'
+  },
+  daRefNo: {
+    type: String,
+    default: 'N/A'
+  },
 
   // Section 3: Payment & Narrative
   modeOfPayment: { 
@@ -90,13 +99,17 @@ const RequisitionSchema = new mongoose.Schema({
     type: String, 
     required: true 
   },
+  // Added Payment Status under the primary billing variables block
+  paymentStatus: {
+    type: String,
+    default: 'N/A'
+  },
 
   // --- FILE ATTACHMENT FIELDS ---
-  // Updated to ensure consistency with Cloudinary & Frontend
   attachmentUrl: { type: String },   
   attachmentName: { type: String },  
   supportingDocument: { type: String }, 
-  cloudinaryId: { type: String }, // Stores public_id for future management
+  cloudinaryId: { type: String }, 
 
   // Section 4: Workflow Tracking
   currentStage: { 
