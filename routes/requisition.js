@@ -87,7 +87,19 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-// 4. GET Single Requisition
+// 4. GET All Requisitions Across All Departments (Global View for FC/MD Dashboard)
+// Placed intentionally here so that Express treats '/all' explicitly before checking generic parameters like '/:id'
+router.get('/all', async (req, res) => {
+  try {
+    const allRequests = await Requisition.find({}).sort({ createdAt: -1 });
+    res.json(allRequests);
+  } catch (err) {
+    console.error("❌ Global Fetch Error:", err.message);
+    res.status(500).json({ error: "Could not retrieve global department records" });
+  }
+});
+
+// 5. GET Single Requisition
 router.get('/single/:id', async (req, res) => {
   try {
     const requisition = await Requisition.findById(req.params.id);
@@ -98,7 +110,7 @@ router.get('/single/:id', async (req, res) => {
   }
 });
 
-// 5. Submit a New Requisition (Matches Sections 1-3 of your Model)
+// 6. Submit a New Requisition (Matches Sections 1-3 of your Model)
 router.post('/submit', upload.single('document'), async (req, res) => {
   try {
     const { 
@@ -155,13 +167,27 @@ router.post('/submit', upload.single('document'), async (req, res) => {
   }
 });
 
-// 6. Action Route (The Logic for HOD -> FC -> MD -> ACCOUNTS -> PAID)
+// 7. Action Route (The Logic for HOD -> FC -> MD -> ACCOUNTS -> PAID)
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride, paymentReference } = req.body; 
   
   try {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
+
+    // --- READ-ONLY MASTER VIEW LOG SAFEGUARD ---
+    // If the Financial Controller submits comments/actions on a record that isn't actively pending inside 
+    // the FC stage (e.g., viewing historical/MD records in the global list), update the timeline logs without shifting the workflow stage
+    if (actorRole.toUpperCase() === 'FC' && reqst.currentStage !== 'FC' && action !== 'Declined') {
+      reqst.approvalHistory.push({ 
+        actorRole, 
+        actorName, 
+        action: 'Commented', 
+        comment: comment || 'FC viewed master record details.' 
+      });
+      await reqst.save();
+      return res.json({ msg: "Log updated successfully from master file view context", data: reqst });
+    }
 
     // Handle Declines/Rejections
     if (action === 'Declined' || action === 'Rejected') {
@@ -183,7 +209,7 @@ router.post('/action/:id', async (req, res) => {
     } else {
        const currentIndex = workflow.indexOf(reqst.currentStage);
        if (currentIndex !== -1 && currentIndex < workflow.length - 1) {
-         reqst.currentStage = workflow[currentIndex + 1];
+          reqst.currentStage = workflow[currentIndex + 1];
        }
     }
 
