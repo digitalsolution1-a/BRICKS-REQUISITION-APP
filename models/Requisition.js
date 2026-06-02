@@ -140,7 +140,7 @@ const RequisitionSchema = new mongoose.Schema({
   approvalHistory: [{
     actorRole: { type: String },
     actorName: { type: String },
-    action: { type: String }, 
+    action: { type: String }, // Flexible string type supports 'Approved', 'Declined', 'Paid', and our new master-view 'Commented' tag safely
     comment: { type: String },
     timestamp: { type: Date, default: Date.now }
   }]
