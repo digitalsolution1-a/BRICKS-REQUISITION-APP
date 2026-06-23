@@ -84,4 +84,59 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// --- 3. RECOVERY: GET IDENTITY CONFIGURATION ---
+// Validates email existence and instructs frontend to request the old password
+router.post('/recovery/get-question', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email address required" });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: cleanEmail });
+    
+    if (!user) {
+      return res.status(404).json({ error: "No personnel identity found with this corporate email." });
+    }
+
+    // Inform frontend to prompt for old password verification
+    res.status(200).json({ question: "Verify your current account security by entering your Old Password." });
+  } catch (err) {
+    console.error("Recovery Profile Fetch Error:", err.message);
+    res.status(500).json({ error: "Internal Server Error fetching verification parameters" });
+  }
+});
+
+// --- 4. RECOVERY: VERIFY AND WRITE NEW PASSWORD ---
+// Safely matches the old password via bcrypt and updates it with the new hash
+router.put('/recovery/reset', async (req, res) => {
+  try {
+    const { email, answer, newPassword } = req.body; // 'answer' represents old password from frontend field
+    
+    if (!email || !answer || !newPassword) {
+      return res.status(400).json({ error: "All validation parameters are required." });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) return res.status(404).json({ error: "Account lookup mismatch." });
+
+    // Validate the incoming old password hash match
+    const isMatch = await bcrypt.compare(answer, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Verification failed. Old password incorrect." });
+    }
+
+    // Securely hash and assign the new password parameters
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    
+    await user.save();
+    res.status(200).json({ msg: "Security parameters updated successfully" });
+    console.log(`🔒 Password changed securely for: ${user.email}`);
+  } catch (err) {
+    console.error("Password Reset Error:", err.message);
+    res.status(500).json({ error: "Internal Server Error while changing security records" });
+  }
+});
+
 module.exports = router;
