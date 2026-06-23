@@ -55,11 +55,10 @@ router.get('/pending/:role', async (req, res) => {
   }
 });
 
-// 2. GET Role-Specific History (Dashboard History Tabs)
+// 2. GET Role-Specific History
 router.get('/history/:role', async (req, res) => {
   const { role } = req.params;
   try {
-    // Finds items that are finalized (Paid/Declined) OR that this specific role has touched
     const history = await Requisition.find({
       $or: [
         { status: { $in: ['Paid', 'Declined'] } },
@@ -72,7 +71,7 @@ router.get('/history/:role', async (req, res) => {
   }
 });
 
-// 3. GET User-Specific History (For the Requester)
+// 3. GET User-Specific History
 router.get('/user/:userId', async (req, res) => {
   try {
     const history = await Requisition.find({ 
@@ -87,8 +86,7 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-// 4. GET All Requisitions Across All Departments (Global View for FC/MD Dashboard)
-// Placed intentionally here so that Express treats '/all' explicitly before checking generic parameters like '/:id'
+// 4. GET All Requisitions
 router.get('/all', async (req, res) => {
   try {
     const allRequests = await Requisition.find({}).sort({ createdAt: -1 });
@@ -110,7 +108,7 @@ router.get('/single/:id', async (req, res) => {
   }
 });
 
-// 6. Submit a New Requisition (Matches Sections 1-3 of your Model)
+// 6. Submit a New Requisition
 router.post('/submit', upload.single('document'), async (req, res) => {
   try {
     const { 
@@ -135,19 +133,16 @@ router.post('/submit', upload.single('document'), async (req, res) => {
       amountInWords, dueDate, modeOfPayment,
       beneficiaryDetails: beneficiaryDetails || "N/A",
       requestNarrative: requestNarrative || "N/A",
-      // File Handling
       attachmentUrl: req.file ? req.file.path : null,
       attachmentName: req.file ? req.file.originalname : null,
       supportingDocument: req.file ? req.file.path : null, 
       cloudinaryId: req.file ? req.file.filename : null,
-      // Initial Stage
       currentStage: 'HOD',
       status: 'Pending'
     });
 
     const savedReq = await newReq.save();
     
-    // Notification Email Logic
     const submissionEmail = `
       <div style="font-family: sans-serif; border: 2px solid #A67C52; padding: 25px; border-radius: 20px; max-width: 600px;">
         <h2 style="color: #A67C52;">New Requisition Submission</h2>
@@ -167,43 +162,29 @@ router.post('/submit', upload.single('document'), async (req, res) => {
   }
 });
 
-// 7. Action Route (The Logic for HOD -> FC -> MD -> ACCOUNTS -> PAID)
+// 7. Action Route
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride, paymentReference } = req.body; 
-  
   try {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
 
-    // --- READ-ONLY MASTER VIEW LOG SAFEGUARD ---
-    // If the Financial Controller submits comments/actions on a record that isn't actively pending inside 
-    // the FC stage (e.g., viewing historical/MD records in the global list), update the timeline logs without shifting the workflow stage
     if (actorRole.toUpperCase() === 'FC' && reqst.currentStage !== 'FC' && action !== 'Declined') {
-      reqst.approvalHistory.push({ 
-        actorRole, 
-        actorName, 
-        action: 'Commented', 
-        comment: comment || 'FC viewed master record details.' 
-      });
+      reqst.approvalHistory.push({ actorRole, actorName, action: 'Commented', comment: comment || 'FC viewed master record.' });
       await reqst.save();
-      return res.json({ msg: "Log updated successfully from master file view context", data: reqst });
+      return res.json({ msg: "Log updated", data: reqst });
     }
 
-    // Handle Declines/Rejections
     if (action === 'Declined' || action === 'Rejected') {
       reqst.status = 'Declined';
       reqst.approvalHistory.push({ actorRole, actorName, action, comment });
       await reqst.save();
-      
       const declineEmail = `<div style="padding: 20px; font-family: sans-serif;"><h2>Requisition Declined</h2><p><strong>Reason:</strong> ${comment}</p></div>`;
       await sendEmail(reqst.requesterEmail, "Requisition Status: Declined", declineEmail);
       return res.json({ msg: "Requisition Declined" });
     }
 
-    // Workflow Stages: HOD -> FC -> MD -> ACCOUNTS -> PAID
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
-    
-    // Check for MD Executive Override
     if (isOverride && actorRole.toUpperCase() === 'MD') {
        reqst.currentStage = 'ACCOUNTS';
     } else {
@@ -213,37 +194,51 @@ router.post('/action/:id', async (req, res) => {
        }
     }
 
-    // Save MD instructions to the specific field in Section 5
-    if (actorRole.toUpperCase() === 'MD') {
-        reqst.mdInstructions = comment || 'Final authorization granted.';
-    }
-
-    // Save Payment Reference if provided (from Accountant Dashboard)
-    if (paymentReference) {
-        reqst.paymentReference = paymentReference;
-    }
-
-    // Final Stage Check: If Accountant marks as 'Paid'
+    if (actorRole.toUpperCase() === 'MD') reqst.mdInstructions = comment || 'Final authorization granted.';
+    if (paymentReference) reqst.paymentReference = paymentReference;
     if (reqst.currentStage === 'PAID' || action === 'Paid') {
       reqst.status = 'Paid';
       reqst.currentStage = 'PAID';
       reqst.disbursementDate = new Date();
     }
 
-    // Update History (Section 6)
-    reqst.approvalHistory.push({ 
-        actorRole, 
-        actorName, 
-        action: action === 'Paid' ? 'Paid' : 'Approved', 
-        comment 
+    reqst.approvalHistory.push({ actorRole, actorName, action: action === 'Paid' ? 'Paid' : 'Approved', comment });
+    await reqst.save();
+    res.json({ msg: `Action successful: ${action}`, data: reqst });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. Resubmit Declined Requisition
+router.put('/resubmit/:id', async (req, res) => {
+  try {
+    const reqst = await Requisition.findById(req.params.id);
+    if (!reqst || reqst.status !== 'Declined') return res.status(400).json({ error: "Requisition not found or not in Declined status" });
+
+    const { amount, requestNarrative, hodForApproval, clientName, vendorName, dueDate } = req.body;
+
+    reqst.amount = amount || reqst.amount;
+    reqst.requestNarrative = requestNarrative || reqst.requestNarrative;
+    reqst.hodForApproval = hodForApproval || reqst.hodForApproval;
+    reqst.clientName = clientName || reqst.clientName;
+    reqst.vendorName = vendorName || reqst.vendorName;
+    reqst.dueDate = dueDate || reqst.dueDate;
+    
+    reqst.status = 'Pending';
+    reqst.currentStage = 'HOD';
+    reqst.approvalHistory.push({
+      actorRole: 'Requester',
+      actorName: reqst.requesterName,
+      action: 'Resubmitted',
+      comment: 'Updated and resubmitted.'
     });
 
     await reqst.save();
-    res.json({ msg: `Action successful: ${action}`, data: reqst });
-
+    await sendEmail(reqst.hodForApproval, "Action Required: Resubmitted Requisition", "A declined request has been updated and requires your review.");
+    res.json({ msg: "Requisition resubmitted successfully", data: reqst });
   } catch (err) {
-    console.error("Action Route Error:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Resubmission failed" });
   }
 });
 
