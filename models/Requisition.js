@@ -63,6 +63,11 @@ const RequisitionSchema = new mongoose.Schema({
     type: String,
     default: 'N/A'
   },
+  // NEW FIELD: Explicitly added to catch the form's invoice payload safely
+  invoiceNo: {
+    type: String,
+    default: 'N/A'
+  },
 
   // Section 3: Payment & Narrative
   modeOfPayment: { 
@@ -99,8 +104,13 @@ const RequisitionSchema = new mongoose.Schema({
     type: String, 
     required: true 
   },
-  // Added Payment Status under the primary billing variables block
+  // Retained original field tag
   paymentStatus: {
+    type: String,
+    default: 'N/A'
+  },
+  // NEW SAFETY FIELD: Fallback catch for the front-end string payload "clientPaymentStatus"
+  clientPaymentStatus: {
     type: String,
     default: 'N/A'
   },
