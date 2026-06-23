@@ -27,7 +27,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } 
 });
 
-// 1. GET Pending Requisitions (Filtered by Role & Email)
+// 1. GET Pending Requisitions
 router.get('/pending/:role', async (req, res) => {
   const { role } = req.params;
   const userEmail = req.query.email;
@@ -165,11 +165,16 @@ router.post('/action/:id', async (req, res) => {
   }
 });
 
-// 8. Resubmit Declined Requisition (UPDATED)
+// 8. Resubmit Declined Requisition (FIXED)
 router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
   try {
     const reqst = await Requisition.findById(req.params.id);
-    if (!reqst || reqst.status !== 'Declined') return res.status(400).json({ error: "Requisition not found or not in Declined status" });
+    
+    // FIXED: Case-insensitive check to ensure database records like 'declined' are caught
+    if (!reqst) return res.status(404).json({ error: "Requisition not found" });
+    if (reqst.status?.toLowerCase() !== 'declined') {
+        return res.status(400).json({ error: "Requisition not in Declined status" });
+    }
 
     // Update fields dynamically from body
     Object.keys(req.body).forEach((key) => {
