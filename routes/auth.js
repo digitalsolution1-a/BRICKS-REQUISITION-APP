@@ -22,7 +22,7 @@ router.post('/register', async (req, res) => {
     user = new User({ 
       name: name.trim(), 
       email: cleanEmail, 
-      password, 
+      password, // Pass plain; Model hashes it
       department: department || 'Operations', 
       role: assignedRole
     });
@@ -126,9 +126,10 @@ router.put('/recovery/reset', async (req, res) => {
       return res.status(400).json({ error: "Verification failed. Old password incorrect." });
     }
 
-    // Securely hash and assign the new password parameters
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(newPassword, salt);
+    // 🟢 FIXED: Assign the plain text password directly to the document object.
+    // Bypassing manual bcrypt calls here prevents double-hashing. 
+    // user.save() automatically fires your pre-save hook in User.js to encrypt it correctly.
+    user.password = newPassword; 
     
     await user.save();
     res.status(200).json({ msg: "Security parameters updated successfully" });
