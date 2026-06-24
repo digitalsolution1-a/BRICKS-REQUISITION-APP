@@ -165,15 +165,19 @@ router.post('/action/:id', async (req, res) => {
   }
 });
 
-// 8. Resubmit Declined Requisition (FIXED)
+// 8. Resubmit / Edit Requisition (UPDATED)
 router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
   try {
     const reqst = await Requisition.findById(req.params.id);
     
-    // FIXED: Case-insensitive check to ensure database records like 'declined' are caught
     if (!reqst) return res.status(404).json({ error: "Requisition not found" });
-    if (reqst.status?.toLowerCase() !== 'declined') {
-        return res.status(400).json({ error: "Requisition not in Declined status" });
+
+    // Allow editing if request is in an early stage (Declined, Pending, or HOD)
+    const editableStatuses = ['declined', 'pending', 'hod'];
+    if (!editableStatuses.includes(reqst.status?.toLowerCase())) {
+        return res.status(400).json({ 
+            error: "This request cannot be edited in its current status." 
+        });
     }
 
     // Update fields dynamically from body
@@ -191,6 +195,8 @@ router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
     }
 
     reqst.amount = Number(req.body.amount) || reqst.amount;
+    
+    // Force reset to 'Pending' so it re-enters the HOD approval flow
     reqst.status = 'Pending';
     reqst.currentStage = 'HOD';
     
@@ -198,11 +204,11 @@ router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
       actorRole: 'Requester',
       actorName: reqst.requesterName,
       action: 'Resubmitted',
-      comment: 'Re-submitted with updated details.'
+      comment: 'Re-submitted/Updated details.'
     });
 
     await reqst.save();
-    res.json({ msg: "Requisition resubmitted successfully", data: reqst });
+    res.json({ msg: "Requisition processed successfully", data: reqst });
   } catch (err) {
     res.status(500).json({ error: "Resubmission failed: " + err.message });
   }
