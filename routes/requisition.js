@@ -137,12 +137,20 @@ router.post('/action/:id', async (req, res) => {
   try {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
+    
     if (action === 'Declined' || action === 'Rejected') {
       reqst.status = 'Declined';
-      reqst.approvalHistory.push({ actorRole, actorName, action, comment });
+      reqst.approvalHistory.push({ 
+          actorRole, 
+          actorName, 
+          action, 
+          comment, 
+          isOverride: !!isOverride 
+      });
       await reqst.save();
       return res.json({ msg: "Requisition Declined" });
     }
+    
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
     if (isOverride && actorRole.toUpperCase() === 'MD') {
        reqst.currentStage = 'ACCOUNTS';
@@ -150,14 +158,24 @@ router.post('/action/:id', async (req, res) => {
        const currentIndex = workflow.indexOf(reqst.currentStage);
        if (currentIndex !== -1 && currentIndex < workflow.length - 1) reqst.currentStage = workflow[currentIndex + 1];
     }
+    
     if (actorRole.toUpperCase() === 'MD') reqst.mdInstructions = comment || 'Final authorization granted.';
     if (paymentReference) reqst.paymentReference = paymentReference;
+    
     if (reqst.currentStage === 'PAID' || action === 'Paid') {
       reqst.status = 'Paid';
       reqst.currentStage = 'PAID';
       reqst.disbursementDate = new Date();
     }
-    reqst.approvalHistory.push({ actorRole, actorName, action: action === 'Paid' ? 'Paid' : 'Approved', comment });
+    
+    reqst.approvalHistory.push({ 
+        actorRole, 
+        actorName, 
+        action: action === 'Paid' ? 'Paid' : 'Approved', 
+        comment, 
+        isOverride: !!isOverride 
+    });
+    
     await reqst.save();
     res.json({ msg: `Action successful: ${action}`, data: reqst });
   } catch (err) {
@@ -165,14 +183,13 @@ router.post('/action/:id', async (req, res) => {
   }
 });
 
-// 8. Resubmit / Edit Requisition (UPDATED)
+// 8. Resubmit / Edit Requisition
 router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
   try {
     const reqst = await Requisition.findById(req.params.id);
     
     if (!reqst) return res.status(404).json({ error: "Requisition not found" });
 
-    // Allow editing if request is in an early stage (Declined, Pending, or HOD)
     const editableStatuses = ['declined', 'pending', 'hod'];
     if (!editableStatuses.includes(reqst.status?.toLowerCase())) {
         return res.status(400).json({ 
@@ -180,14 +197,12 @@ router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
         });
     }
 
-    // Update fields dynamically from body
     Object.keys(req.body).forEach((key) => {
       if (req.body[key] !== undefined && req.body[key] !== null && req.body[key] !== "") {
         reqst[key] = req.body[key];
       }
     });
 
-    // Handle new file upload
     if (req.file) {
       reqst.attachmentUrl = req.file.path;
       reqst.attachmentName = req.file.originalname;
@@ -196,7 +211,6 @@ router.put('/resubmit/:id', upload.single('document'), async (req, res) => {
 
     reqst.amount = Number(req.body.amount) || reqst.amount;
     
-    // Force reset to 'Pending' so it re-enters the HOD approval flow
     reqst.status = 'Pending';
     reqst.currentStage = 'HOD';
     
