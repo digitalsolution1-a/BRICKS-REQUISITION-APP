@@ -148,6 +148,7 @@ const RequisitionSchema = new mongoose.Schema({
     actorName: { type: String },
     action: { type: String }, 
     comment: { type: String },
+    isOverride: { type: Boolean, default: false },
     timestamp: { type: Date, default: Date.now }
   }]
 }, { 
