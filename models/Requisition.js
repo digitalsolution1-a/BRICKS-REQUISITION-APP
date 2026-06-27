@@ -54,7 +54,6 @@ const RequisitionSchema = new mongoose.Schema({
   otherVendorName: { 
     type: String 
   },
-  // Added P.O Number & DA Ref No under procurement tracking
   poNumber: {
     type: String,
     default: 'N/A'
@@ -63,7 +62,6 @@ const RequisitionSchema = new mongoose.Schema({
     type: String,
     default: 'N/A'
   },
-  // NEW FIELD: Explicitly added to catch the form's invoice payload safely
   invoiceNo: {
     type: String,
     default: 'N/A'
@@ -104,19 +102,17 @@ const RequisitionSchema = new mongoose.Schema({
     type: String, 
     required: true 
   },
-  // Retained original field tag
   paymentStatus: {
     type: String,
     default: 'N/A'
   },
-  // NEW SAFETY FIELD: Fallback catch for the front-end string payload "clientPaymentStatus"
   clientPaymentStatus: {
     type: String,
     default: 'N/A'
   },
 
   // --- FILE ATTACHMENT FIELDS ---
-  attachmentUrl: { type: String },   
+  attachmentUrl: { type: String },    
   attachmentName: { type: String },  
   supportingDocument: { type: String }, 
   cloudinaryId: { type: String }, 
@@ -124,12 +120,12 @@ const RequisitionSchema = new mongoose.Schema({
   // Section 4: Workflow Tracking
   currentStage: { 
     type: String, 
-    enum: ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'], 
+    enum: ['HOD', 'FC', 'MD', 'ACCOUNTANT', 'COMPLETED'], 
     default: 'HOD' 
   },
   status: { 
     type: String, 
-    enum: ['Pending', 'Approved', 'Declined', 'Paid'], 
+    enum: ['Pending', 'Approved', 'Declined', 'READY_FOR_DISBURSEMENT', 'DISBURSED'], 
     default: 'Pending' 
   },
   
@@ -150,7 +146,7 @@ const RequisitionSchema = new mongoose.Schema({
   approvalHistory: [{
     actorRole: { type: String },
     actorName: { type: String },
-    action: { type: String }, // Flexible string type supports 'Approved', 'Declined', 'Paid', and our new master-view 'Commented' tag safely
+    action: { type: String }, 
     comment: { type: String },
     timestamp: { type: Date, default: Date.now }
   }]
