@@ -131,42 +131,46 @@ router.post('/submit', upload.single('document'), async (req, res) => {
   }
 });
 
-// 7. Action Route
+// 7. Action Route (FIXED)
 router.post('/action/:id', async (req, res) => {
   const { action, comment, actorRole, actorName, isOverride, paymentReference } = req.body; 
   try {
     const reqst = await Requisition.findById(req.params.id);
     if (!reqst) return res.status(404).json({ msg: "Requisition not found" });
     
+    // 1. Handle Declines (Works fine)
     if (action === 'Declined' || action === 'Rejected') {
       reqst.status = 'Declined';
-      reqst.approvalHistory.push({ 
-          actorRole, 
-          actorName, 
-          action, 
-          comment, 
-          isOverride: !!isOverride 
-      });
+      reqst.approvalHistory.push({ actorRole, actorName, action: 'Declined', comment, isOverride: !!isOverride });
       await reqst.save();
       return res.json({ msg: "Requisition Declined" });
     }
     
+    // 2. Workflow Transition Logic
     const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'COMPLETED'];
+    
     if (isOverride && actorRole.toUpperCase() === 'MD') {
        reqst.currentStage = 'ACCOUNTS';
+       reqst.status = 'READY_FOR_DISBURSEMENT';
+    } else if (actorRole.toUpperCase() === 'ACCOUNTANT' && action === 'Disburse') {
+       // Only the Accountant can force the move to COMPLETED
+       reqst.currentStage = 'COMPLETED';
+       reqst.status = 'DISBURSED';
+       reqst.disbursementDate = new Date();
     } else {
+       // Standard movement for HOD/FC/MD
        const currentIndex = workflow.indexOf(reqst.currentStage);
-       if (currentIndex !== -1 && currentIndex < workflow.length - 1) reqst.currentStage = workflow[currentIndex + 1];
+       if (currentIndex !== -1 && currentIndex < 3) { // Stop at ACCOUNTS (index 3)
+           reqst.currentStage = workflow[currentIndex + 1];
+           // If it just reached ACCOUNTS, set ready status
+           if (reqst.currentStage === 'ACCOUNTS') reqst.status = 'READY_FOR_DISBURSEMENT';
+           else reqst.status = 'Pending';
+       }
     }
     
+    // 3. Metadata
     if (actorRole.toUpperCase() === 'MD') reqst.mdInstructions = comment || 'Final authorization granted.';
     if (paymentReference) reqst.paymentReference = paymentReference;
-    
-    if (reqst.currentStage === 'COMPLETED' || action === 'Disburse') {
-      reqst.status = 'DISBURSED';
-      reqst.currentStage = 'COMPLETED';
-      reqst.disbursementDate = new Date();
-    }
     
     reqst.approvalHistory.push({ 
         actorRole, 
