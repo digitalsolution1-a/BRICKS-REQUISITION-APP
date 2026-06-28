@@ -146,27 +146,34 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Requisition Declined" });
     }
     
-    // 2. Workflow Transition Logic
-    const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'COMPLETED'];
-    
-    if (isOverride && actorRole.toUpperCase() === 'MD') {
-       reqst.currentStage = 'ACCOUNTS';
-       reqst.status = 'READY_FOR_DISBURSEMENT';
-    } else if (actorRole.toUpperCase() === 'ACCOUNTANT' && action === 'Disburse') {
-       // Only the Accountant can force the move to COMPLETED
-       reqst.currentStage = 'COMPLETED';
-       reqst.status = 'DISBURSED';
-       reqst.disbursementDate = new Date();
-    } else {
-       // Standard movement for HOD/FC/MD
-       const currentIndex = workflow.indexOf(reqst.currentStage);
-       if (currentIndex !== -1 && currentIndex < 3) { // Stop at ACCOUNTS (index 3)
-           reqst.currentStage = workflow[currentIndex + 1];
-           // If it just reached ACCOUNTS, set ready status
-           if (reqst.currentStage === 'ACCOUNTS') reqst.status = 'READY_FOR_DISBURSEMENT';
-           else reqst.status = 'Pending';
-       }
-    }
+   // 2. Workflow Transition Logic
+const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'COMPLETED'];
+const currentIndex = workflow.indexOf(reqst.currentStage);
+
+if (isOverride && actorRole.toUpperCase() === 'MD') {
+   reqst.currentStage = 'ACCOUNTS';
+   reqst.status = 'READY_FOR_DISBURSEMENT';
+} else if (actorRole.toUpperCase() === 'ACCOUNTANT' && action === 'Disburse') {
+   reqst.currentStage = 'COMPLETED';
+   reqst.status = 'DISBURSED';
+   reqst.disbursementDate = new Date();
+} else if (action === 'Approved') {
+   // FIX: Ensure we only increment if we are not already at the end
+   if (currentIndex !== -1 && currentIndex < 3) {
+      reqst.currentStage = workflow[currentIndex + 1];
+      
+      // If the NEW stage is ACCOUNTS, set the status
+      if (reqst.currentStage === 'ACCOUNTS') {
+         reqst.status = 'READY_FOR_DISBURSEMENT';
+      } else {
+         reqst.status = 'Pending';
+      }
+   } else if (reqst.currentStage === 'MD') {
+      // Emergency catch: If MD approves, manually push to ACCOUNTS
+      reqst.currentStage = 'ACCOUNTS';
+      reqst.status = 'READY_FOR_DISBURSEMENT';
+   }
+}
     
     // 3. Metadata
     if (actorRole.toUpperCase() === 'MD') reqst.mdInstructions = comment || 'Final authorization granted.';
