@@ -57,7 +57,7 @@ router.get('/history/:role', async (req, res) => {
   try {
     const history = await Requisition.find({
       $or: [
-        { status: { $in: ['Paid', 'Declined'] } },
+        { status: { $in: ['DISBURSED', 'Declined'] } },
         { approvalHistory: { $elemMatch: { actorRole: role.toUpperCase() } } }
       ]
     }).sort({ updatedAt: -1 });
@@ -151,7 +151,7 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Requisition Declined" });
     }
     
-    const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'PAID'];
+    const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'COMPLETED'];
     if (isOverride && actorRole.toUpperCase() === 'MD') {
        reqst.currentStage = 'ACCOUNTS';
     } else {
@@ -162,16 +162,16 @@ router.post('/action/:id', async (req, res) => {
     if (actorRole.toUpperCase() === 'MD') reqst.mdInstructions = comment || 'Final authorization granted.';
     if (paymentReference) reqst.paymentReference = paymentReference;
     
-    if (reqst.currentStage === 'PAID' || action === 'Paid') {
-      reqst.status = 'Paid';
-      reqst.currentStage = 'PAID';
+    if (reqst.currentStage === 'COMPLETED' || action === 'Disburse') {
+      reqst.status = 'DISBURSED';
+      reqst.currentStage = 'COMPLETED';
       reqst.disbursementDate = new Date();
     }
     
     reqst.approvalHistory.push({ 
         actorRole, 
         actorName, 
-        action: action === 'Paid' ? 'Paid' : 'Approved', 
+        action: action === 'Disburse' ? 'Disbursed' : 'Approved', 
         comment, 
         isOverride: !!isOverride 
     });
