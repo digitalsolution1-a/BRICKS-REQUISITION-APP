@@ -32,8 +32,9 @@ router.get('/pending/:role', async (req, res) => {
   const { role } = req.params;
   const userEmail = req.query.email;
   try {
-    let query = { status: 'Pending' };
     const roleUpper = role.toUpperCase();
+    let query = { status: 'Pending' }; // Default for most
+
     if (roleUpper === 'HOD' && userEmail) {
       query.currentStage = 'HOD';
       query.hodForApproval = { $regex: new RegExp(`^${userEmail}$`, 'i') };
@@ -42,8 +43,13 @@ router.get('/pending/:role', async (req, res) => {
     } else if (roleUpper === 'MD') {
       query.currentStage = 'MD';
     } else if (roleUpper === 'ACCOUNTANT' || roleUpper === 'ACCOUNTS') {
-      query.currentStage = 'ACCOUNTS';
+      // OVERRIDE: Accountants look for disbursed-ready items
+      query = { 
+        status: 'READY_FOR_DISBURSEMENT', 
+        currentStage: 'ACCOUNTS' 
+      };
     }
+
     const pendingRequests = await Requisition.find(query).sort({ createdAt: -1 });
     res.json(pendingRequests);
   } catch (err) {
