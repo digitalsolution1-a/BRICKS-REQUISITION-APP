@@ -146,33 +146,28 @@ router.post('/action/:id', async (req, res) => {
       return res.json({ msg: "Requisition Declined" });
     }
     
-   // 2. Workflow Transition Logic
+ // 2. Workflow Transition Logic
 const workflow = ['HOD', 'FC', 'MD', 'ACCOUNTS', 'COMPLETED'];
 const currentIndex = workflow.indexOf(reqst.currentStage);
 
+// If already at or past ACCOUNTS, ignore the request (Idempotency)
+if (currentIndex >= 3 && action === 'Approved') {
+    // Just return success without trying to move again
+    return res.json({ msg: "Already authorized", data: reqst });
+}
+
 if (isOverride && actorRole.toUpperCase() === 'MD') {
-   reqst.currentStage = 'ACCOUNTS';
-   reqst.status = 'READY_FOR_DISBURSEMENT';
+    reqst.currentStage = 'ACCOUNTS';
+    reqst.status = 'READY_FOR_DISBURSEMENT';
 } else if (actorRole.toUpperCase() === 'ACCOUNTANT' && action === 'Disburse') {
-   reqst.currentStage = 'COMPLETED';
-   reqst.status = 'DISBURSED';
-   reqst.disbursementDate = new Date();
+    reqst.currentStage = 'COMPLETED';
+    reqst.status = 'DISBURSED';
+    reqst.disbursementDate = new Date();
 } else if (action === 'Approved') {
-   // FIX: Ensure we only increment if we are not already at the end
-   if (currentIndex !== -1 && currentIndex < 3) {
-      reqst.currentStage = workflow[currentIndex + 1];
-      
-      // If the NEW stage is ACCOUNTS, set the status
-      if (reqst.currentStage === 'ACCOUNTS') {
-         reqst.status = 'READY_FOR_DISBURSEMENT';
-      } else {
-         reqst.status = 'Pending';
-      }
-   } else if (reqst.currentStage === 'MD') {
-      // Emergency catch: If MD approves, manually push to ACCOUNTS
-      reqst.currentStage = 'ACCOUNTS';
-      reqst.status = 'READY_FOR_DISBURSEMENT';
-   }
+    if (currentIndex !== -1 && currentIndex < 3) {
+        reqst.currentStage = workflow[currentIndex + 1];
+        reqst.status = (reqst.currentStage === 'ACCOUNTS') ? 'READY_FOR_DISBURSEMENT' : 'Pending';
+    }
 }
     
     // 3. Metadata
