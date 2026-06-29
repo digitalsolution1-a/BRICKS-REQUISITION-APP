@@ -120,7 +120,7 @@ const RequisitionSchema = new mongoose.Schema({
   // Section 4: Workflow Tracking
   currentStage: { 
     type: String, 
-    enum: ['HOD', 'FC', 'MD', 'ACCOUNTANT', 'COMPLETED'], 
+    enum: ['HOD', 'FC', 'MD', 'ACCOUNTS', 'COMPLETED'], 
     default: 'HOD' 
   },
   status: { 
